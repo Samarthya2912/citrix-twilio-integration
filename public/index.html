@@ -13,12 +13,16 @@
       <section class="left-column" id="info">
         <h2>Your Device Info</h2>
         <div id="client-name"></div>
+        <div id="environment-detector"></div>
         <div id="output-selection" class="hide">
           <label>Ringtone Devices</label>
           <select id="ringtone-devices" multiple></select>
           <label>Speaker Devices</label>
-          <select id="speaker-devices" multiple></select
-          ><br />
+          <select id="speaker-devices" multiple></select>
+          <br />
+          <label>Microphone Devices</label>
+          <button id="set-input-device">Set input device</button>
+          <br />
           <button id="get-devices">Seeing "Unknown" devices?</button>
         </div>
       </section>
@@ -58,7 +62,6 @@
     </main>
 
     <script src="//ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
-    <script type="text/javascript" src="twilio.min.js"></script>
-    <script src="quickstart.js"></script>
+    <script type="module" src="dist/bundle.js"></script>
   </body>
 </html>

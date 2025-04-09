@@ -1,11 +1,72 @@
-﻿$(function () {
+﻿import * as _CitrixBootstrap from "@citrix/ucsdk/CitrixBootstrap";
+import * as _CitrixWebRTC from "@citrix/ucsdk/CitrixWebRTC";
+import * as Twilio from "@twilio/voice-sdk";
+
+$(async function () {
+  const CitrixBootstrap = window.CitrixBootstrap;
+
+  CitrixBootstrap.initBootstrap("Vendor");
+
+  const envDetector = document.getElementById("environment-detector");
+  envDetector.innerText = "Detecting environment...";
+
+  const citrixWebRtcRedir = await window.getCitrixWebrtcRedir();
+
+  switch (citrixWebRtcRedir) {
+    case 1: {
+      envDetector.innerText =
+        "Citrix virtual environment is active, and Webrtc redirection is supported.";
+
+      window.CitrixWebRTC.initUCSDK("Vendor");
+      break;
+    }
+
+    case 0: {
+      envDetector.innerText =
+        "Citrix virtual environment is active, however, Webrtc redirection is not supported";
+      break;
+    }
+
+    case -1: {
+      envDetector.innerText =
+        "Registry not found or Citrix virtual environment is not active";
+      break;
+    }
+  }
+
+  let remoteAudio,
+    remoteIncomingAudio,
+    outputDevice = "default";
+  const setupOnAudioElementForCitrix = (call) => {
+    // Listen for audio event. Triggers when the audio element
+    // used for remote audio stream has been created.
+    call.on("audio", (audioElement) => {
+      // Remove any previous mapping
+      if (remoteAudio) {
+        CitrixWebRTC.disposeAudioElement(remoteAudio);
+        remoteAudio = null;
+      }
+      // Map the audio element that was created for
+      // remote audio stream as soon as it's available
+      CitrixWebRTC.mapAudioElement(audioElement);
+
+      audioElement.setSinkId("default");
+
+      window.remoteAudioElement = remoteAudio = audioElement;
+    });
+  };
+
   const speakerDevices = document.getElementById("speaker-devices");
   const ringtoneDevices = document.getElementById("ringtone-devices");
   const outputVolumeBar = document.getElementById("output-volume");
+  const setDefaultInputDeviceButton =
+    document.getElementById("set-input-device");
   const inputVolumeBar = document.getElementById("input-volume");
   const volumeIndicators = document.getElementById("volume-indicators");
   const callButton = document.getElementById("button-call");
-  const outgoingCallHangupButton = document.getElementById("button-hangup-outgoing");
+  const outgoingCallHangupButton = document.getElementById(
+    "button-hangup-outgoing"
+  );
   const callControlsDiv = document.getElementById("call-controls");
   const audioSelectionDiv = document.getElementById("output-selection");
   const getAudioDevicesButton = document.getElementById("get-devices");
@@ -29,6 +90,17 @@
 
   // Event Listeners
 
+  setDefaultInputDeviceButton.onclick = (e) => {
+    e.preventDefault();
+    if (device) {
+      device.audio.setInputDevice("default", (err) => {
+        log("Error setting input device: " + err.message);
+      });
+    } else {
+      log("Device not initialized");
+    }
+  };
+
   callButton.onclick = (e) => {
     e.preventDefault();
     makeOutgoingCall();
@@ -36,7 +108,6 @@
   getAudioDevicesButton.onclick = getAudioDevices;
   speakerDevices.addEventListener("change", updateOutputDevice);
   ringtoneDevices.addEventListener("change", updateRingtoneDevice);
-  
 
   // SETUP STEP 1:
   // Browser client should be started after a user gesture
@@ -64,12 +135,26 @@
   function intitializeDevice() {
     logDiv.classList.remove("hide");
     log("Initializing device");
-    device = new Twilio.Device(token, {
-      logLevel:1,
+
+    const deviceOptions = {
+      logLevel: 1,
       // Set Opus as our preferred codec. Opus generally performs better, requiring less bandwidth and
       // providing better audio quality in restrained network conditions.
       codecPreferences: ["opus", "pcmu"],
-    });
+    };
+
+    if (citrixWebRtcRedir === 1) {
+      const CitrixWebRTC = window.CitrixWebRTC;
+
+      deviceOptions.enumerateDevices =
+        CitrixWebRTC.enumerateDevices.bind(CitrixWebRTC);
+      deviceOptions.getUserMedia = (...args) =>
+        CitrixWebRTC.getUserMedia(...args);
+      deviceOptions.RTCPeerConnection =
+        CitrixWebRTC.CitrixPeerConnection.bind(CitrixWebRTC);
+    }
+
+    device = new Twilio.Device(token, deviceOptions);
 
     addDeviceListeners(device);
 
@@ -111,7 +196,17 @@
       log(`Attempting to call ${params.To} ...`);
 
       // Twilio.Device.connect() returns a Call object
-      const call = await device.connect({ params });
+      const call = (window.call = await device.connect({
+        params,
+        rtcConfiguration: {
+          // Needs explicit sdpSemantics and enableDtlsSrtp
+          sdpSemantics: "unified",
+          enableDtlsSrtp: true,
+        },
+      }));
+
+      // Setup audio element for remote audio
+      if (citrixWebRtcRedir === 1) setupOnAudioElementForCitrix(call);
 
       // add listeners to the Call
       // "accepted" means the call has finished connecting and the state is now "open"
@@ -123,7 +218,6 @@
         log("Hanging up ...");
         call.disconnect();
       };
-
     } else {
       log("Unable to make call.");
     }
@@ -148,6 +242,20 @@
 
   function handleIncomingCall(call) {
     log(`Incoming call from ${call.parameters.From}`);
+
+    // if (citrixWebRtcRedir === 1) {
+    //   remoteIncomingAudio = new Audio(
+    //     "https://sdk.twilio.com/js/client/sounds/releases/1.0.0/incoming.mp3"
+    //   );
+
+    //   window.CitrixWebRTC.mapAudioElement(remoteIncomingAudio);
+
+    //   remoteIncomingAudio.setSinkId(remoteIncomingAudio);
+
+    //   remoteIncomingAudio.setSinkId(outputDevice);
+
+    //   remoteIncomingAudio.play();
+    // }
 
     //show incoming call div and incoming phone number
     incomingCallDiv.classList.remove("hide");
@@ -175,7 +283,18 @@
   // ACCEPT INCOMING CALL
 
   function acceptIncomingCall(call) {
-    call.accept();
+    if (citrixWebRtcRedir === 1) {
+      setupOnAudioElementForCitrix(call);
+      call.accept({
+        rtcConfiguration: {
+          // Needs explicit sdpSemantics and enableDtlsSrtp
+          sdpSemantics: "unified",
+          enableDtlsSrtp: true,
+        },
+      });
+    } else {
+      call.accept();
+    }
 
     //update UI
     log("Accepted incoming call.");
@@ -231,7 +350,9 @@
   // AUDIO CONTROLS
 
   async function getAudioDevices() {
-    await navigator.mediaDevices.getUserMedia({ audio: true });
+    await (citrixWebRtcRedir === 1
+      ? CitrixWebRTC.getUserMedia
+      : navigator.mediaDevices.getUserMedia)({ audio: true });
     updateAllAudioDevices.bind(device);
   }
 
@@ -247,7 +368,8 @@
       .filter((node) => node.selected)
       .map((node) => node.getAttribute("data-id"));
 
-    device.audio.speakerDevices.set(selectedDevices);
+    outputDevice = selectedDevices[0];
+    if (remoteAudio) remoteAudio.setSinkId(outputDevice);
   }
 
   function updateRingtoneDevice() {
