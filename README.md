@@ -58,4 +58,4 @@ function cloneStream(oldStream) {
 ```
 
 # Possible solution
-Citrix provides a `createMediaStream([track])` that maybe used to create a remote media stream. But we'll also have to dispose this stream when no longer in use.
+Citrix provides a `createMediaStream([track])` that can be used to create a remote media stream on the local machine instead of MediaStream which creates a stream object on the VM. But we'll also have to dispose this stream when no longer in use.
